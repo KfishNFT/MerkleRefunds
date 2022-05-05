@@ -16,23 +16,29 @@ contract MerkleRefunds {
     /// @notice Refunder balance
     mapping(address => uint256) internal refundBalance;
 
-
     /// @notice Emit event once ETH is refunded
-    /// @param sender The address being refunded
+    /// @param refunder The address refunding
+    /// @param refunded The address being refunded
     /// @param value The amount of ETH
     event Refunded(address indexed refunder, address indexed refunded, uint256 value);
 
     /// @notice Emit once merkle roots are added or updated
     /// @param refunder The address that is refunding
-    /// @param merkleRoots_ The merkle roots
-    /// @param refundAmounts_ Amounts corresponding to the merkle roots
+    /// @param merkleRoots The merkle roots
+    /// @param refundAmounts Amounts corresponding to the merkle roots
     event MerkleRootsChanged(address indexed refunder, bytes32[] merkleRoots, uint256[] refundAmounts);
 
     /// @notice Emit once merkle roots are deleted
     /// @param refunder The address that is refunding
-    /// @param merkleRoots_ The merkle roots
-    /// @param refundAmounts_ Amounts corresponding to the merkle roots
-    event MerkleRootsRemoved(address indexed refunder, bytes32[] merkleRoots, uint256[] refundAMounts);
+    /// @param merkleRoots The merkle roots
+    /// @param refundAmounts Amounts corresponding to the merkle roots
+    /// @param balanceWithdrawn The balance that withdrawn by the refunder
+    event MerkleRootsRemoved(
+        address indexed refunder,
+        bytes32[] merkleRoots,
+        uint256[] refundAmounts,
+        uint256 balanceWithdrawn
+    );
 
     /// @notice Emit once balance is increased
     /// @param refunder The address that is refunding
@@ -52,14 +58,11 @@ contract MerkleRefunds {
     /// @notice Sets the merkle root for refunds verification where the msg.sender is the refunder
     /// @param merkleRoots_ used to verify the refund list
     /// @param refundAmounts_ used to set the refund amounts
-    function setMerkleRoots(
-        bytes32[] merkleRoots_,
-        uint256[] refundAmounts_,
-    ) external payable {
-        require(merkleRoots_.length == refundAmounts.length_, "Refunds: roots and amounts length not equal");
+    function setMerkleRoots(bytes32[] calldata merkleRoots_, uint256[] calldata refundAmounts_) external payable {
+        require(merkleRoots_.length == refundAmounts_.length, "Refunds: roots and amounts length not equal");
         merkleRoots[msg.sender] = merkleRoots_;
         refundAmounts[msg.sender] = refundAmounts_;
-        if(msg.value > 0) {
+        if (msg.value > 0) {
             refundBalance[msg.sender] += msg.value;
         }
 
@@ -78,6 +81,7 @@ contract MerkleRefunds {
     function decreaseBalance(uint256 amount_) external {
         require(amount_ <= refundBalance[msg.sender], "Refunds: insufficient balance");
         refundBalance[msg.sender] -= amount_;
+        // solhint-disable-next-line avoid-low-level-calls
         (bool success, ) = payable(msg.sender).call{value: refundBalance[msg.sender]}("");
         require(success, "Refunds: withdrawal failed");
 
@@ -91,8 +95,9 @@ contract MerkleRefunds {
         uint256 previousBalance = refundBalance[msg.sender];
         delete merkleRoots[msg.sender];
         delete refundAmounts[msg.sender];
-        if(refundBalance[msg.sender] > 0) {
+        if (refundBalance[msg.sender] > 0) {
             refundBalance[msg.sender] = 0;
+            // solhint-disable-next-line avoid-low-level-calls
             (bool success, ) = payable(msg.sender).call{value: refundBalance[msg.sender]}("");
             require(success, "Refunds: withdrawal failed");
         }
@@ -107,8 +112,11 @@ contract MerkleRefunds {
     function refund(address refunder_, bytes32[] calldata merkleProof_) external {
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender));
         for (uint256 i = 0; i < merkleRoots[refunder_].length; i++) {
-            if(!refunded[refunder_][msg.sender] && MerkleProof.verify(merkleRoots[refunder_][i], merkleProof_, leaf)) {
-                require(refundAmounts[refunder_][i] <= refundBalance[refunder_], "Refunds: refunder does not have enough balance");
+            if (!refunded[refunder_][msg.sender] && MerkleProof.verify(merkleProof_, merkleRoots[refunder_][i], leaf)) {
+                require(
+                    refundAmounts[refunder_][i] <= refundBalance[refunder_],
+                    "Refunds: refunder does not have enough balance"
+                );
                 refunded[refunder_][msg.sender] = true;
                 refundBalance[refunder_] -= refundAmounts[refunder_][i];
                 payable(msg.sender).transfer(refundAmounts[refunder_][i]);
@@ -116,7 +124,7 @@ contract MerkleRefunds {
                 break;
             }
         }
-        require(refunded[msg.sender], "Refunds: not refundable");
+        require(refunded[refunder_][msg.sender], "Refunds: not refundable");
     }
 
     /// @notice Allow refunders to withdraw their balance
